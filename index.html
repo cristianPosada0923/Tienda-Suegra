@@ -558,6 +558,7 @@
                                     <th class="py-3 px-4">Fecha</th>
                                     <th class="py-3 px-4">Concepto</th>
                                     <th class="py-3 px-4">Categoría</th>
+                                    <th class="py-3 px-4 text-center">Unidades</th>
                                     <th class="py-3 px-4 text-right">Monto (COP)</th>
                                     <th class="py-3 px-4 text-center">Acción</th>
                                 </tr>
@@ -2150,15 +2151,19 @@
 
             const registerExpense = document.getElementById('bulk-register-expense').checked;
             if (registerExpense && totalBatchCost > 0) {
+                const batchNames = appState.bulkBatch.slice(0, 3).map(b => `${b.qty}x ${b.name}`).join(', ');
+                const extraCount = appState.bulkBatch.length > 3 ? ` (+${appState.bulkBatch.length - 3} más)` : '';
                 appState.transactions.unshift({
                     id: 'tx-' + Date.now(),
                     type: 'expense',
-                    concept: `Recepción masiva de mercancía (${totalUnits} unds)`,
+                    isPurchase: true,
+                    purchasedUnits: totalUnits,
+                    concept: `Compra / Recepción (${totalUnits} und.): ${batchNames}${extraCount}`,
                     amount: totalBatchCost,
                     date: new Date().toISOString().split('T')[0],
                     category: 'Compra Mercancía',
                     payment: 'Efectivo',
-                    productId: '',
+                    productId: appState.bulkBatch.length === 1 && appState.bulkBatch[0].productId ? appState.bulkBatch[0].productId : '',
                     qty: totalUnits
                 });
             }
@@ -2271,6 +2276,8 @@
             appState.transactions.unshift({
                 id: 'tx-' + Date.now(),
                 type,
+                isPurchase: type === 'expense' && Boolean(prodId),
+                purchasedUnits: type === 'expense' && prodId ? qty : 0,
                 concept,
                 amount,
                 date,
@@ -2323,6 +2330,16 @@
             emptyEl.classList.add('hidden');
             tbody.innerHTML = list.map(t => {
                 const isInc = t.type === 'income';
+                const parsedFromConcept = !isInc && (!t.purchasedUnits && !t.qty)
+                    ? (() => {
+                        const match = String(t.concept || '').match(/(?:compra|recepci[oó]n)[^0-9]*(\d+)\s*und/i);
+                        return match ? Number(match[1]) : 0;
+                    })()
+                    : 0;
+                const unitsCount = !isInc
+                    ? (Number(t.purchasedUnits || (t.productId ? t.qty : 0) || parsedFromConcept) || 0)
+                    : 0;
+                const showUnitsBadge = !isInc && (t.isPurchase || Boolean(t.productId) || t.category === 'Compra Mercancía' || unitsCount > 0);
                 return `
                     <tr class="hover:bg-slate-50/80">
                         <td class="py-3 px-4 whitespace-nowrap text-slate-600 font-medium">${t.date}</td>
@@ -2332,6 +2349,12 @@
                         </td>
                         <td class="py-3 px-4 whitespace-nowrap">
                             <span class="px-2 py-1 rounded-lg text-[11px] font-bold ${isInc ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}">${t.category}</span>
+                        </td>
+                        <td class="py-3 px-4 whitespace-nowrap text-center">
+                            ${showUnitsBadge && unitsCount > 0
+                                ? `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-amber-100 text-amber-900 border border-amber-200">${unitsCount} und.</span>`
+                                : `<span class="text-slate-400 font-semibold">-</span>`
+                            }
                         </td>
                         <td class="py-3 px-4 whitespace-nowrap text-right font-extrabold ${isInc ? 'text-emerald-600' : 'text-rose-600'}">
                             ${isInc ? '+' : '-'}${formatCOP(t.amount)}
@@ -2367,14 +2390,18 @@
                 showToast('No hay movimientos para exportar', 'error');
                 return;
             }
-            const headers = ['Fecha', 'Tipo', 'Concepto', 'Categoria', 'Metodo_Pago', 'Valor_COP', 'Formato_COP'];
+            const headers = ['Fecha', 'Tipo', 'Concepto', 'Categoria', 'Unidades_Compradas', 'Metodo_Pago', 'Valor_COP', 'Formato_COP'];
             const lines = appState.transactions.map(t => {
                 const signed = t.type === 'income' ? Math.round(Number(t.amount)) : -Math.round(Number(t.amount));
+                const units = t.type === 'expense'
+                    ? (Number(t.purchasedUnits || (t.productId ? t.qty : 0)) || '')
+                    : '';
                 return [
                     t.date,
                     t.type === 'income' ? 'Ingreso' : 'Gasto',
                     `"${String(t.concept).replace(/"/g, '""')}"`,
                     `"${String(t.category).replace(/"/g, '""')}"`,
+                    units,
                     `"${String(t.payment).replace(/"/g, '""')}"`,
                     signed,
                     `"${formatCOP(signed)}"`
